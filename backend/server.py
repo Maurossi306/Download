@@ -158,6 +158,9 @@ async def get_customer(customer_id: str):
 @api_router.put("/customers/{customer_id}", response_model=Customer)
 async def update_customer(customer_id: str, customer: CustomerCreate):
     customer_dict = customer.dict()
+    # Convert date to string for MongoDB
+    if isinstance(customer_dict.get('birth_date'), date):
+        customer_dict['birth_date'] = customer_dict['birth_date'].isoformat()
     customer_dict["id"] = customer_id
     customer_obj = Customer(**customer_dict)
     
