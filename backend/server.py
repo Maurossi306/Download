@@ -250,6 +250,9 @@ async def get_customer_packages_by_customer(customer_id: str):
 @api_router.post("/appointments", response_model=Appointment)
 async def create_appointment(appointment: AppointmentCreate):
     appointment_dict = appointment.dict()
+    # Convert date to string for MongoDB
+    if isinstance(appointment_dict.get('date'), date):
+        appointment_dict['date'] = appointment_dict['date'].isoformat()
     appointment_obj = Appointment(**appointment_dict)
     await db.appointments.insert_one(appointment_obj.dict())
     return appointment_obj
