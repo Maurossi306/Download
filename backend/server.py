@@ -270,6 +270,9 @@ async def get_appointments_by_date(date: str):
 @api_router.put("/appointments/{appointment_id}", response_model=Appointment)
 async def update_appointment(appointment_id: str, appointment: AppointmentCreate):
     appointment_dict = appointment.dict()
+    # Convert date to string for MongoDB
+    if isinstance(appointment_dict.get('date'), date):
+        appointment_dict['date'] = appointment_dict['date'].isoformat()
     appointment_dict["id"] = appointment_id
     appointment_obj = Appointment(**appointment_dict)
     
