@@ -136,6 +136,9 @@ class PaymentCreate(BaseModel):
 @api_router.post("/customers", response_model=Customer)
 async def create_customer(customer: CustomerCreate):
     customer_dict = customer.dict()
+    # Convert date to string for MongoDB
+    if isinstance(customer_dict.get('birth_date'), date):
+        customer_dict['birth_date'] = customer_dict['birth_date'].isoformat()
     customer_obj = Customer(**customer_dict)
     await db.customers.insert_one(customer_obj.dict())
     return customer_obj
