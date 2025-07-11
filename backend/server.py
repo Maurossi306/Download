@@ -224,6 +224,11 @@ async def delete_package(package_id: str):
 @api_router.post("/customer-packages", response_model=CustomerPackage)
 async def create_customer_package(customer_package: CustomerPackageCreate):
     customer_package_dict = customer_package.dict()
+    # Convert dates to strings for MongoDB
+    if isinstance(customer_package_dict.get('purchase_date'), date):
+        customer_package_dict['purchase_date'] = customer_package_dict['purchase_date'].isoformat()
+    if isinstance(customer_package_dict.get('expiry_date'), date):
+        customer_package_dict['expiry_date'] = customer_package_dict['expiry_date'].isoformat()
     customer_package_obj = CustomerPackage(**customer_package_dict)
     await db.customer_packages.insert_one(customer_package_obj.dict())
     return customer_package_obj
