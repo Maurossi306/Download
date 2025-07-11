@@ -137,10 +137,14 @@ class PaymentCreate(BaseModel):
 async def create_customer(customer: CustomerCreate):
     customer_dict = customer.dict()
     # Convert date to string for MongoDB
-    if isinstance(customer_dict.get('birth_date'), date):
+    if 'birth_date' in customer_dict:
         customer_dict['birth_date'] = customer_dict['birth_date'].isoformat()
     customer_obj = Customer(**customer_dict)
-    await db.customers.insert_one(customer_obj.dict())
+    # Convert the object to dict and ensure dates are strings
+    customer_data = customer_obj.dict()
+    if 'birth_date' in customer_data and isinstance(customer_data['birth_date'], date):
+        customer_data['birth_date'] = customer_data['birth_date'].isoformat()
+    await db.customers.insert_one(customer_data)
     return customer_obj
 
 @api_router.get("/customers", response_model=List[Customer])
