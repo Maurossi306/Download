@@ -288,6 +288,9 @@ async def update_appointment(appointment_id: str, appointment: AppointmentCreate
 @api_router.post("/payments", response_model=Payment)
 async def create_payment(payment: PaymentCreate):
     payment_dict = payment.dict()
+    # Convert date to string for MongoDB
+    if isinstance(payment_dict.get('payment_date'), date):
+        payment_dict['payment_date'] = payment_dict['payment_date'].isoformat()
     payment_obj = Payment(**payment_dict)
     await db.payments.insert_one(payment_obj.dict())
     return payment_obj
