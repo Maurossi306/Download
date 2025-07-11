@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,9 +6,10 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, date
+import base64
 
 
 ROOT_DIR = Path(__file__).parent
@@ -25,32 +26,294 @@ app = FastAPI()
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+# ===============================
+# MODELS
+# ===============================
 
-# Define Models
-class StatusCheck(BaseModel):
+class Customer(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    name: str
+    cpf: str
+    email: str
+    phone: str
+    address: str
+    birth_date: date
+    photo: Optional[str] = None  # base64 encoded
+    medical_notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class CustomerCreate(BaseModel):
+    name: str
+    cpf: str
+    email: str
+    phone: str
+    address: str
+    birth_date: date
+    photo: Optional[str] = None
+    medical_notes: Optional[str] = None
 
-# Add your routes to the router instead of directly to app
+class Package(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    type: str  # "monthly", "per_session", "procedure"
+    price: float
+    description: str
+    duration_days: Optional[int] = None  # for monthly packages
+    sessions_included: Optional[int] = None  # for session packages
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class PackageCreate(BaseModel):
+    name: str
+    type: str
+    price: float
+    description: str
+    duration_days: Optional[int] = None
+    sessions_included: Optional[int] = None
+
+class CustomerPackage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    customer_id: str
+    package_id: str
+    purchase_date: date
+    amount_paid: float
+    payment_method: str
+    status: str = "active"  # active, expired, cancelled
+    remaining_sessions: Optional[int] = None
+    expiry_date: Optional[date] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class CustomerPackageCreate(BaseModel):
+    customer_id: str
+    package_id: str
+    purchase_date: date
+    amount_paid: float
+    payment_method: str
+    remaining_sessions: Optional[int] = None
+    expiry_date: Optional[date] = None
+
+class Appointment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    customer_id: str
+    package_id: str
+    date: date
+    time: str
+    service_type: str
+    instructor: Optional[str] = None
+    status: str = "scheduled"  # scheduled, completed, cancelled
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class AppointmentCreate(BaseModel):
+    customer_id: str
+    package_id: str
+    date: date
+    time: str
+    service_type: str
+    instructor: Optional[str] = None
+    notes: Optional[str] = None
+
+class Payment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    customer_package_id: str
+    amount: float
+    payment_date: date
+    payment_method: str
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class PaymentCreate(BaseModel):
+    customer_package_id: str
+    amount: float
+    payment_date: date
+    payment_method: str
+    notes: Optional[str] = None
+
+# ===============================
+# CUSTOMER ROUTES
+# ===============================
+
+@api_router.post("/customers", response_model=Customer)
+async def create_customer(customer: CustomerCreate):
+    customer_dict = customer.dict()
+    customer_obj = Customer(**customer_dict)
+    await db.customers.insert_one(customer_obj.dict())
+    return customer_obj
+
+@api_router.get("/customers", response_model=List[Customer])
+async def get_customers():
+    customers = await db.customers.find().to_list(1000)
+    return [Customer(**customer) for customer in customers]
+
+@api_router.get("/customers/{customer_id}", response_model=Customer)
+async def get_customer(customer_id: str):
+    customer = await db.customers.find_one({"id": customer_id})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return Customer(**customer)
+
+@api_router.put("/customers/{customer_id}", response_model=Customer)
+async def update_customer(customer_id: str, customer: CustomerCreate):
+    customer_dict = customer.dict()
+    customer_dict["id"] = customer_id
+    customer_obj = Customer(**customer_dict)
+    
+    result = await db.customers.replace_one({"id": customer_id}, customer_obj.dict())
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer_obj
+
+@api_router.delete("/customers/{customer_id}")
+async def delete_customer(customer_id: str):
+    result = await db.customers.delete_one({"id": customer_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return {"message": "Customer deleted successfully"}
+
+# ===============================
+# PACKAGE ROUTES
+# ===============================
+
+@api_router.post("/packages", response_model=Package)
+async def create_package(package: PackageCreate):
+    package_dict = package.dict()
+    package_obj = Package(**package_dict)
+    await db.packages.insert_one(package_obj.dict())
+    return package_obj
+
+@api_router.get("/packages", response_model=List[Package])
+async def get_packages():
+    packages = await db.packages.find().to_list(1000)
+    return [Package(**package) for package in packages]
+
+@api_router.get("/packages/{package_id}", response_model=Package)
+async def get_package(package_id: str):
+    package = await db.packages.find_one({"id": package_id})
+    if not package:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return Package(**package)
+
+@api_router.put("/packages/{package_id}", response_model=Package)
+async def update_package(package_id: str, package: PackageCreate):
+    package_dict = package.dict()
+    package_dict["id"] = package_id
+    package_obj = Package(**package_dict)
+    
+    result = await db.packages.replace_one({"id": package_id}, package_obj.dict())
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return package_obj
+
+@api_router.delete("/packages/{package_id}")
+async def delete_package(package_id: str):
+    result = await db.packages.delete_one({"id": package_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return {"message": "Package deleted successfully"}
+
+# ===============================
+# CUSTOMER PACKAGE ROUTES
+# ===============================
+
+@api_router.post("/customer-packages", response_model=CustomerPackage)
+async def create_customer_package(customer_package: CustomerPackageCreate):
+    customer_package_dict = customer_package.dict()
+    customer_package_obj = CustomerPackage(**customer_package_dict)
+    await db.customer_packages.insert_one(customer_package_obj.dict())
+    return customer_package_obj
+
+@api_router.get("/customer-packages", response_model=List[CustomerPackage])
+async def get_customer_packages():
+    customer_packages = await db.customer_packages.find().to_list(1000)
+    return [CustomerPackage(**cp) for cp in customer_packages]
+
+@api_router.get("/customer-packages/customer/{customer_id}", response_model=List[CustomerPackage])
+async def get_customer_packages_by_customer(customer_id: str):
+    customer_packages = await db.customer_packages.find({"customer_id": customer_id}).to_list(1000)
+    return [CustomerPackage(**cp) for cp in customer_packages]
+
+# ===============================
+# APPOINTMENT ROUTES
+# ===============================
+
+@api_router.post("/appointments", response_model=Appointment)
+async def create_appointment(appointment: AppointmentCreate):
+    appointment_dict = appointment.dict()
+    appointment_obj = Appointment(**appointment_dict)
+    await db.appointments.insert_one(appointment_obj.dict())
+    return appointment_obj
+
+@api_router.get("/appointments", response_model=List[Appointment])
+async def get_appointments():
+    appointments = await db.appointments.find().to_list(1000)
+    return [Appointment(**appointment) for appointment in appointments]
+
+@api_router.get("/appointments/date/{date}")
+async def get_appointments_by_date(date: str):
+    appointments = await db.appointments.find({"date": date}).to_list(1000)
+    return [Appointment(**appointment) for appointment in appointments]
+
+@api_router.put("/appointments/{appointment_id}", response_model=Appointment)
+async def update_appointment(appointment_id: str, appointment: AppointmentCreate):
+    appointment_dict = appointment.dict()
+    appointment_dict["id"] = appointment_id
+    appointment_obj = Appointment(**appointment_dict)
+    
+    result = await db.appointments.replace_one({"id": appointment_id}, appointment_obj.dict())
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return appointment_obj
+
+# ===============================
+# PAYMENT ROUTES
+# ===============================
+
+@api_router.post("/payments", response_model=Payment)
+async def create_payment(payment: PaymentCreate):
+    payment_dict = payment.dict()
+    payment_obj = Payment(**payment_dict)
+    await db.payments.insert_one(payment_obj.dict())
+    return payment_obj
+
+@api_router.get("/payments", response_model=List[Payment])
+async def get_payments():
+    payments = await db.payments.find().to_list(1000)
+    return [Payment(**payment) for payment in payments]
+
+# ===============================
+# DASHBOARD ROUTES
+# ===============================
+
+@api_router.get("/dashboard/stats")
+async def get_dashboard_stats():
+    # Get counts
+    total_customers = await db.customers.count_documents({})
+    total_packages = await db.packages.count_documents({})
+    total_appointments = await db.appointments.count_documents({})
+    active_customer_packages = await db.customer_packages.count_documents({"status": "active"})
+    
+    # Get today's appointments
+    today = datetime.now().date().isoformat()
+    today_appointments = await db.appointments.find({"date": today}).to_list(1000)
+    
+    # Get recent payments
+    recent_payments = await db.payments.find().sort("payment_date", -1).limit(5).to_list(5)
+    
+    return {
+        "total_customers": total_customers,
+        "total_packages": total_packages,
+        "total_appointments": total_appointments,
+        "active_customer_packages": active_customer_packages,
+        "today_appointments": len(today_appointments),
+        "recent_payments": recent_payments
+    }
+
+# ===============================
+# BASIC ROUTES
+# ===============================
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
+    return {"message": "Customer Management System API"}
 
 # Include the router in the main app
 app.include_router(api_router)
