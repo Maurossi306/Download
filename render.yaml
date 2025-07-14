@@ -1,0 +1,18 @@
+databases:
+  - name: fitmanager-db
+    databaseName: fitmanager
+    user: fitmanager_user
+
+services:
+  - type: web
+    name: fitmanager
+    env: python
+    buildCommand: "pip install -r requirements.txt && cd frontend && npm install && npm run build && mv build ../build"
+    startCommand: "uvicorn server:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fitmanager-db
+          property: connectionString
+      - key: PYTHON_VERSION
+        value: 3.11.0
