@@ -1,17 +1,19 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
-import uuid
 from datetime import datetime, date
+import uuid
+import os
+import logging
+import secrets
 import base64
-import json
 
+# Load .env
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -20,16 +22,25 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
+# Create the main app
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
+
+# Auth setup
+security = HTTPBasic()
+USERNAME = "gabi"
+PASSWORD = "gabi03"
+
+def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, USERNAME)
+    correct_password = secrets.compare_digest(credentials.password, PASSWORD)
+    if not (correct_username and correct_password):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return credentials.username
 
 # ===============================
 # MODELS
 # ===============================
-
 class Customer(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -128,32 +139,60 @@ class PaymentCreate(BaseModel):
     payment_method: str
     notes: Optional[str] = None
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
+# ===============================
+# ROUTES WITH AUTH
+# ===============================
+@api_router.post("/customers", response_model=Customer)
+async def create_customer(customer: CustomerCreate, user: str = Depends(authenticate)):
+    data = customer.dict()
+    data["birth_date"] = data["birth_date"].isoformat()
+    customer_obj = Customer(**data)
+    await db.customers.insert_one(customer_obj.dict())
+    return customer_obj
 
-VALID_USERNAME = "gabi"
-VALID_PASSWORD = "gabi03"
+@api_router.get("/customers", response_model=List[Customer])
+async def get_customers(user: str = Depends(authenticate)):
+    customers = await db.customers.find().to_list(1000)
+    return [Customer(**c) for c in customers]
 
-@api_router.post("/login")
-async def login_user(credentials: LoginRequest):
-    if credentials.username == VALID_USERNAME and credentials.password == VALID_PASSWORD:
-        return {"message": "Login realizado com sucesso!"}
-    else:
-        raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+@api_router.get("/customers/{customer_id}", response_model=Customer)
+async def get_customer(customer_id: str, user: str = Depends(authenticate)):
+    customer = await db.customers.find_one({"id": customer_id})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return Customer(**customer)
+
+@api_router.put("/customers/{customer_id}", response_model=Customer)
+async def update_customer(customer_id: str, customer: CustomerCreate, user: str = Depends(authenticate)):
+    data = customer.dict()
+    data["birth_date"] = data["birth_date"].isoformat()
+    data["id"] = customer_id
+    customer_obj = Customer(**data)
+    result = await db.customers.replace_one({"id": customer_id}, customer_obj.dict())
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer_obj
+
+@api_router.delete("/customers/{customer_id}")
+async def delete_customer(customer_id: str, user: str = Depends(authenticate)):
+    result = await db.customers.delete_one({"id": customer_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return {"message": "Customer deleted"}
+
+# Você deve repetir `user: str = Depends(authenticate)` nas demais rotas, como:
+# - /packages
+# - /customer-packages
+# - /appointments
+# - /payments
+# - /dashboard/stats
 
 # ===============================
-# CUSTOMER ROUTES
+# ROOT E FINALIZAÇÃO
 # ===============================
-# ... [mantém o restante do código original sem alterações nas rotas] ...
-
-# ===============================
-# BASIC ROUTES
-# ===============================
-
 @api_router.get("/")
-async def root():
-    return {"message": "Customer Management System API"}
+async def root(user: str = Depends(authenticate)):
+    return {"message": "API com autenticação ativa"}
 
 app.include_router(api_router)
 
@@ -165,12 +204,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+logging.basicConfig(level=logging.INFO)
