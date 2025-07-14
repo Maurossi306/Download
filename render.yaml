@@ -132,7 +132,7 @@ class PaymentCreate(BaseModel):
     notes: Optional[str] = None
 
 # ===============================
-# ROUTES (abertas, sem login)
+# ROTAS (sem login)
 # ===============================
 
 @api_router.get("/")
@@ -154,8 +154,10 @@ async def get_customers():
 
 # (demais rotas seguem o mesmo padrão...)
 
+# Adicionar o router
 app.include_router(api_router)
 
+# Middleware CORS (permite chamadas de qualquer origem)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -164,6 +166,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Encerrar conexão com o MongoDB ao desligar
 @app.on_event("shutdown")
 async def shutdown_db():
     client.close()
