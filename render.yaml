@@ -2,11 +2,13 @@ databases:
   - name: fitmanager-db
     databaseName: fitmanager
     user: fitmanager_user
+    plan: free  # 👈 ESSENCIAL para não cobrar
 
 services:
   - type: web
     name: fitmanager
     env: python
+    plan: free  # 👈 ESSENCIAL para não cobrar
     buildCommand: "pip install -r requirements.txt && cd frontend && npm install && npm run build && mv build ../build"
     startCommand: "uvicorn server:app --host 0.0.0.0 --port $PORT"
     envVars:
