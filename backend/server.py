@@ -20,8 +20,8 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ.get("MONGO_URL")
 db_name = os.environ.get("DB_NAME")
 
-if not mongo_url or not db_name:
-    raise ValueError("As variáveis MONGO_URL e DB_NAME precisam estar no .env")
+iif not mongo_url or not db_name:
+    raise ValueError("As variáveis de ambiente MONGO_URL e DB_NAME precisam estar definidas no .env")
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
