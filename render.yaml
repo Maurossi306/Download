@@ -10,15 +10,22 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, date
 
+# Carregar variáveis de ambiente do arquivo .env
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+dotenv_path = ROOT_DIR / '.env'
+load_dotenv(dotenv_path)
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+# Conexão com o MongoDB
+mongo_url = os.getenv("MONGO_URL")
+db_name = os.getenv("DB_NAME")
+
+if not mongo_url or not db_name:
+    raise ValueError("As variáveis de ambiente MONGO_URL e DB_NAME precisam estar definidas no .env")
+
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[db_name]
 
-# Create the main app
+# Criação da aplicação FastAPI
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
